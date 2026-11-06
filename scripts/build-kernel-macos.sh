@@ -1,26 +1,27 @@
 #!/bin/bash
-# Build the thor kernel (Image + DTBs) on macOS with the NDK LLVM toolchain.
-# Everything needed for the first boot is built into the Image (no modules
-# deployment), so no depmod is required on the host.
+# Build the thor kernel (Image + DTBs + modules) on macOS with NDK LLVM.
 set -e
-
 ROOT="/Users/xlisp/PyPro/xiaomi_install_ubuntu"
 KERNEL="$ROOT/src/linux-diting"
 BUILD="$ROOT/thor-build"
 NDKBIN="$ROOT/downloads/android-ndk-r30/toolchains/llvm/prebuilt/darwin-x86_64/bin"
 FRAGMENT="$ROOT/thor-port/thor.config"
+LOG="$ROOT/output/kernel-build.log"
 JOBS=$(( $(sysctl -n hw.ncpu) + 1 ))
 
 export PATH="$NDKBIN:/usr/local/opt/make/libexec/gnubin:$PATH"
 export LC_ALL=C
-export CCACHE_DISABLE=1
 
-# HOSTCC must be Apple's clang (the NDK clang has no macOS SDK headers);
-# target objects are built with the NDK clang via LLVM=1.
+# macOS lacks glibc <elf.h>; the NDK sysroot ships a compatible one.
+NDKINC="$ROOT/downloads/hostinc"
+
 KMAKE="make -C $KERNEL O=$BUILD ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-	HOSTCC=/usr/bin/clang HOSTCXX=/usr/bin/clang++ -j$JOBS"
+	HOSTCC=/usr/bin/clang HOSTCXX=/usr/bin/clang++ \
+	HOSTCFLAGS=-I$NDKINC -j$JOBS"
 
-mkdir -p "$BUILD"
+mkdir -p "$BUILD" "$ROOT/output"
+exec > "$LOG" 2>&1
+set -x
 
 echo "== toolchain =="
 clang --version | head -1
@@ -28,11 +29,9 @@ ld.lld --version | head -1
 
 echo "== defconfig + fragment =="
 $KMAKE defconfig
-$KERNEL/scripts/kconfig/merge_config.sh -m -O "$BUILD" \
-	"$BUILD/.config" "$FRAGMENT"
+cat "$FRAGMENT" >> "$BUILD/.config"
 $KMAKE olddefconfig
 
-# Verify every fragment option survived (like the Diting build).
 missing=0
 while IFS= read -r line; do
 	case "$line" in

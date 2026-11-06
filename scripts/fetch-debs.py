@@ -152,7 +152,7 @@ def resolve(index, installed, seeds):
 def deb_extract(deb, staging):
     """unpack data.tar.* into staging, return control stanza text"""
     tmp = tempfile.mkdtemp(prefix="debx-")
-    sh(["ar", "x", deb, "--outdir", tmp])
+    sh(["ar", "x", os.path.abspath(deb)], cwd=tmp)  # macOS ar has no --outdir
     data = None
     ctrl = None
     for f in os.listdir(tmp):

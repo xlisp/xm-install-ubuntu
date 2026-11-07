@@ -9,7 +9,7 @@ FRAGMENT="$ROOT/thor-port/thor.config"
 LOG="$ROOT/output/kernel-build.log"
 JOBS=$(( $(sysctl -n hw.ncpu) + 1 ))
 
-export PATH="$NDKBIN:/usr/local/opt/make/libexec/gnubin:$PATH"
+export PATH="$ROOT/downloads/hostbin:$NDKBIN:/usr/local/opt/make/libexec/gnubin:$PATH"
 export LC_ALL=C
 
 # macOS lacks glibc <elf.h>; the NDK sysroot ships a compatible one.

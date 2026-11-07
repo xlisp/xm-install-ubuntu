@@ -30,9 +30,9 @@
 - [11. 构建与刷机操作手册](#11-构建与刷机操作手册)
   - [分区大小（256G 版实测）与双槽位安全网](#分区大小256g-版实测与双槽位安全网)
 - [12. 当前状态与已知限制](#12-当前状态与已知限制)
-- [14. 刷入 Ubuntu 后，Mac 还能用 adb 连接吗？](#14-刷入-ubuntu-后mac-还能用-adb-连接吗)
-- [15. 与 Ubuntu Touch 的对比：好处和区别](#15-与-ubuntu-touch-的对比好处和区别)
-- [16. 致谢与参考](#16-致谢与参考)
+- [13. 刷入 Ubuntu 后，Mac 还能用 adb 连接吗？](#13-刷入-ubuntu-后mac-还能用-adb-连接吗)
+- [14. 与 Ubuntu Touch 的对比：好处和区别](#14-与-ubuntu-touch-的对比好处和区别)
+- [15. 致谢与参考](#15-致谢与参考)
 
 ---
 
@@ -375,7 +375,7 @@ USB NCM 网络与串口、UFS 根文件系统、触摸；WiFi/BT/音频/调制�
 - rootfs 内 inode 属主为首启 chown 纠偏（构建宿主无 sudo）
 - LTPO 多档刷新率仅实现 60/120 两档
 
-## 14. 刷入 Ubuntu 后，Mac 还能用 adb 连接吗？
+## 13. 刷入 Ubuntu 后，Mac 还能用 adb 连接吗？
 
 **能。** adb 的设备端是 `adbd` 守护进程，走 USB 的 ADB 协议；它是普通用户态程序，
 不依赖 Android 内核——Ubuntu Touch（Halium）正是这样做的（Halium 保留 Android
@@ -383,7 +383,8 @@ USB NCM 网络与串口、UFS 根文件系统、触摸；WiFi/BT/音频/调制�
 
 ```sh
 # 手机上（刷入后、有网络时执行一次）
-apt install android-tools-adbd
+apt install adbd          # universe 源，v34.0.5（Provides: android-tools-adbd）
+systemctl enable --now adbd
 # 之后每次开机由 systemd 拉起 adbd，Mac 侧 adb devices 即可见
 ```
 
@@ -406,7 +407,7 @@ apt install android-tools-adbd
 便利补充。早期 bring-up（屏幕还没点亮、网络还没起）靠 ramoops 回读，这在 diting
 移植里被验证为最高效的迭代方式。
 
-## 15. 与 Ubuntu Touch 的对比：好处和区别
+## 14. 与 Ubuntu Touch 的对比：好处和区别
 
 先说一个事实：**Ubuntu Touch 根本没有 12S Ultra 的移植**（UBports 设备列表里没有
 thor），所以对本机而言这不是二选一——原生 Ubuntu 是唯一的"真 Linux"路线。但对比
@@ -438,7 +439,7 @@ thor），所以对本机而言这不是二选一——原生 Ubuntu 是唯一�
 "给这台手机一颗真正的 Linux 心脏"。前者换皮快、上限低；后者起手慢、上限是
 一台真正的口袋 Linux 工作站。
 
-## 16. 致谢与参考
+## 15. 致谢与参考
 
 - [royka1/diting-ubuntu](https://github.com/royka1/diting-ubuntu) +
   [royka1/linux-diting](https://github.com/royka1/linux-diting)——本项目的事实标准：

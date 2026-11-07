@@ -28,8 +28,11 @@
 - [9. macOS 交叉编译：踩过的 9 个坑与全部解法](#9-macos-交叉编译踩过的-9-个坑与全部解法)
 - [10. 目录结构](#10-目录结构)
 - [11. 构建与刷机操作手册](#11-构建与刷机操作手册)
+  - [分区大小（256G 版实测）与双槽位安全网](#分区大小256g-版实测与双槽位安全网)
 - [12. 当前状态与已知限制](#12-当前状态与已知限制)
-- [13. 致谢与参考](#13-致谢与参考)
+- [14. 刷入 Ubuntu 后，Mac 还能用 adb 连接吗？](#14-刷入-ubuntu-后mac-还能用-adb-连接吗)
+- [15. 与 Ubuntu Touch 的对比：好处和区别](#15-与-ubuntu-touch-的对比好处和区别)
+- [16. 致谢与参考](#16-致谢与参考)
 
 ---
 
@@ -304,6 +307,34 @@ cd /Users/xlisp/PyPro/xiaomi_install_ubuntu
    （期间勿退出账号/恢复出厂/刷机）
 5. `adb reboot bootloader` 后 `fastboot flashing unlock`（手机音量键确认，清空数据）
 
+### 分区大小（256G 版实测）与双槽位安全网
+
+从运行中的 Android 读出的实测值（`dumpsys diskstats`）：
+
+| 分区 | 大小 | 说明 |
+| --- | --- | --- |
+| **userdata（sda36）** | **224 GiB**（234,872,812 KiB） | 刷 Linux 的目标盘；当前为 f2fs+FBE，整体覆盖 |
+| boot_a / boot_b | 192 MiB（0xC000000） | taro 同代验证值；boot.img 61M 放置余量充足 |
+| vendor_boot_a / vendor_boot_b | 96 MiB（0x6000000） | vendor_boot.img 仅 124K |
+| dtbo_a / dtbo_b | ~4 MiB | 刷机时 `erase`（厂商 overlay 不可叠加主线 DTB） |
+| super | ~10 GiB | 动态分区容器（system/vendor/product…），**完全不碰** |
+| modem_/bluetooth_/dsp_/persist | 数 GiB | 固件分区，首启只读挂载提取，永不写入 |
+
+刷机到 bootloader 后可看精确字节数（只读）：
+
+```bash
+fastboot getvar all 2>&1 | grep "partition-size"
+```
+
+**双槽位安全网**：刷机脚本只写 **slot b**（boot_b/vendor_boot_b + userdata），
+slot a 的 HyperOS 原封不动。Linux 起不来时一条命令回 Android：
+
+```bash
+fastboot set_active a     # 回原厂系统（modem 固件/persist/数据分区表均未动）
+```
+
+注意 userdata 被覆盖后原 Android **数据**不可恢复（系统本身可随时用小米线刷包重装）。
+
 ### 刷机与首启
 
 ```bash
@@ -344,7 +375,70 @@ USB NCM 网络与串口、UFS 根文件系统、触摸；WiFi/BT/音频/调制�
 - rootfs 内 inode 属主为首启 chown 纠偏（构建宿主无 sudo）
 - LTPO 多档刷新率仅实现 60/120 两档
 
-## 13. 致谢与参考
+## 14. 刷入 Ubuntu 后，Mac 还能用 adb 连接吗？
+
+**能。** adb 的设备端是 `adbd` 守护进程，走 USB 的 ADB 协议；它是普通用户态程序，
+不依赖 Android 内核——Ubuntu Touch（Halium）正是这样做的（Halium 保留 Android
+内核 + adbd）。原生 Linux 设备上同样可行：
+
+```sh
+# 手机上（刷入后、有网络时执行一次）
+apt install android-tools-adbd
+# 之后每次开机由 systemd 拉起 adbd，Mac 侧 adb devices 即可见
+```
+
+工作原理与条件：
+
+- adbd 在设备侧使用 **functionfs（ffs）** gadget 功能，把 USB 接口交给 adbd 自绘——
+  我们的内核配置已包含 `CONFIG_USB_CONFIGFS_F_FS=y`（原为 F_FS gadget 预留），无需改内核
+- adb 会话即 root@172.16.42.1 之外的另一条独立通道：`adb shell` / `adb push` /
+  `adb logcat`（Linux 上没有 Android logcat，但 `journalctl -f` 起同样作用）
+
+与 Ubuntu Touch 的差异（诚实说明）：
+
+| 时机 | Ubuntu Touch | 本项目（原生 Ubuntu） |
+| --- | --- | --- |
+| 装完系统即可用 adb？ | ✅ adbd 在 Halium initramfs 里，开机即在线 | ⚠️ 需先装 `android-tools-adbd` 包；adb 自 Ubuntu 用户态起来后才可用 |
+| 半砖（内核启动失败）时 adb？ | ✅ 常常还能连上（initramfs 阶段） | ❌ 用 **pstore/ramoops** 替代：内核日志落在厂商 ramoops 区（0xa7000000），**暖重启回 slot a 的 Android** 后 `cat /sys/fs/pstore/console-ramoops-0` 直接读 |
+| 推荐日常通道 | adb | **USB NCM 网络 + ssh**（172.16.42.1）：完整 TCP/IP，scp/rsync/端口转发/多会话都可用，体验优于 adb |
+
+`scripts/thor-usb-net.sh` 提供的 NCM 网络是本项目的一等公民调试通道；adb 是可选的
+便利补充。早期 bring-up（屏幕还没点亮、网络还没起）靠 ramoops 回读，这在 diting
+移植里被验证为最高效的迭代方式。
+
+## 15. 与 Ubuntu Touch 的对比：好处和区别
+
+先说一个事实：**Ubuntu Touch 根本没有 12S Ultra 的移植**（UBports 设备列表里没有
+thor），所以对本机而言这不是二选一——原生 Ubuntu 是唯一的"真 Linux"路线。但对比
+仍有价值，它说明了两种技术路线的本质差异：
+
+| 维度 | Ubuntu Touch（Halium 路线） | 本项目（主线内核路线） |
+| --- | --- | --- |
+| **内核** | Android 厂商内核（HyperOS 的 6.x）+ libhybris 补丁 | **上游主线稳定版**（7.2.10，与 PC 同源），持续跟进 kernel.org |
+| **驱动方式** | 复用 Android 二进制 blob（libhybris 桥接） | 全部上游驱动（freedreno GPU、ath11k WiFi、qcom_mdt 固件加载器），无 Android 残留 |
+| **用户态** | Lomiri/Unity8 + 自研 click 包体系，apt 可用但非一等公民 | **真 Ubuntu**：完整 apt/dpkg 生态（5 万+ arm64 包）、systemd、snap/flatpak |
+| **能装什么** | UT 商店 + 有限的 native app | 浏览器/IDE/编译器/Docker（内核 namespace/cgroup 齐全）/Waydroid（容器里跑 Android 应用） |
+| **内核更新** | 绑定 UBports 设备维护者的移植节奏 | 直接吃上游 stable；SoC 级支持随主线自动受益 |
+| **硬件能力上限** | 受限于厂商内核的旧驱动栈 | 跟随主线演进：新 GPU 特性、新文件系统、新安全机制 |
+| **调试体验** | adb / UT 工具 | ssh over USB 网络、`journalctl`、pstore、FTRACE/KPROBE（已编入内核）、标准 Linux 工具全家桶 |
+| **多系统** | 双系统方案复杂 | **A/B 槽位原生支持**：slot b 跑 Ubuntu、slot a 留 HyperOS，`fastboot set_active` 一键切换 |
+| **安全更新** | 依赖 Halium blob 的 EOL 风险 | 主线 LTS + Ubuntu 26.04（2031 年支持期） |
+| **成本** | 成熟设备的移植几乎零成本 | 需要自研设备树/面板驱动（本项目已完成的工作） |
+
+**这个路线的真实代价（不回避）**：
+
+1. **前期投入大**——面板点亮、设备树、固件提取都要自己做（本文档记录的全部工作）；
+   UT 在有 Halium 移植的设备上是"刷完即用"
+2. **相机最难**——IMX989 大底多摄的 CAMSS 主线支持是长期工程（diting 也只做到
+   双后摄阶段）；UT 靠 Android blob 反而容易出图
+3. **外设逐步点亮**——WiFi/音频/调制解调器按优先级分阶段；好在同 SoC 的 diting
+   已把"电话/短信/5G 数据"跑通（IPA v5.1 + rmtfs），移植路径是复刻而非探路
+
+**一句话总结**：Ubuntu Touch 是"在 Android 内核上借一个 Linux 桌面"，本项目是
+"给这台手机一颗真正的 Linux 心脏"。前者换皮快、上限低；后者起手慢、上限是
+一台真正的口袋 Linux 工作站。
+
+## 16. 致谢与参考
 
 - [royka1/diting-ubuntu](https://github.com/royka1/diting-ubuntu) +
   [royka1/linux-diting](https://github.com/royka1/linux-diting)——本项目的事实标准：

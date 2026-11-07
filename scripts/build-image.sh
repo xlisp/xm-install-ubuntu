@@ -5,7 +5,7 @@ set -e
 ROOT="/Users/xlisp/PyPro/xiaomi_install_ubuntu"
 STAGING="$ROOT/rootfs-staging"
 OUT="$ROOT/output"
-MKE2FS="/usr/local/opt/e2fsprogs/sbin/mke2fs"
+MKE2FS="/usr/local/opt/e2fsprogs-local/sbin/mke2fs"
 IMG="$OUT/rootfs.img"
 SIZE=12G
 

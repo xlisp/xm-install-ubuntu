@@ -285,6 +285,31 @@ xiaomi_install_ubuntu/
     ├── lineage-kernel-sm8450/   LineageOS 厂商内核（面板/触摸参考）
     ├── android-mainline-port/   yzddmr6 的移植方法论手册
     └── linux-mdss-dsi-panel-driver-generator-master/  lmdpdg 面板驱动生成器
+
+---
+~/PyPro/xiaomi_install_ubuntu main*
+❯ du -sh *
+3.6M	backup
+3.8G	downloads
+488M	output
+ 36K	README.md
+188M	rootfs-staging
+ 52K	scripts
+3.4G	src
+9.0G	thor-build
+120K	thor-port
+ 12K	zcode_log.txt
+
+~/PyPro/xiaomi_install_ubuntu main*
+❯ du -sh output/*
+ 61M	output/boot.img
+196K	output/kernel-build.log
+427M	output/rootfs.img
+124K	output/vendor_boot.img
+
+~/PyPro/xiaomi_install_ubuntu main*
+❯
+
 ```
 
 ## 11. 构建与刷机操作手册

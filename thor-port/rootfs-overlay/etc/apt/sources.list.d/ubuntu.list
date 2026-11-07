@@ -1,0 +1,2 @@
+deb [trusted=yes] https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports resolute main universe
+deb [trusted=yes] https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports resolute-updates main universe

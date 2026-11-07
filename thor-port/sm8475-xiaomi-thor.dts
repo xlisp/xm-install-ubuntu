@@ -1,0 +1,1165 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Xiaomi 12S Ultra (thor)
+ *
+ * Local bring-up device tree, based on the sm8475-xiaomi-diting.dts of the
+ * Diting Ubuntu port. Board values were taken from the vendor device tree
+ * of a 2203121C (CN, HyperOS OS3.0.6.0.VLACNXM) unit, read from
+ * /sys/firmware/fdt (sm8450-mainline/fdt thor.dtb).
+ *
+ * Not enabled yet: cameras (IMX989 and friends), haptics (AW8697), the
+ * PM8010 display/camera PMIC, USB-C role switching (pmic-glink ucsi).
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/firmware/qcom,scm.h>
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
+#include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+
+#include "sm8475.dtsi"
+#include "pm8350.dtsi"
+#include "pm8350b.dtsi"
+#include "pm8350c.dtsi"
+#include "pm8450.dtsi"
+#include "pmk8350.dtsi"
+#include "pmr735a.dtsi"
+
+/* As on Diting: vendor carveouts differ from the SM8450 reference */
+/delete-node/ &adsp_mem;
+/delete-node/ &rmtfs_mem;
+/delete-node/ &xbl_ramdump_mem;
+/delete-node/ &xbl_sc_mem;
+
+/ {
+	model = "Xiaomi 12S Ultra";
+	compatible = "xiaomi,thor", "qcom,sm8475";
+	chassis-type = "handset";
+
+	/* qcom,msm-id/qcom,board-id are added to a copy of the DTB by the
+	 * boot image tooling (same ids as Diting: msm 531/540/530, board 65544) */
+
+	/*
+	 * WCD938x codec as on Diting: micbias 2.75 V, supplies and reset
+	 * from the vendor DT; there is no headphone jack.
+	 */
+	wcd938x: audio-codec {
+		compatible = "qcom,wcd9385-codec";
+
+		pinctrl-0 = <&wcd_default>;
+		pinctrl-names = "default";
+
+		qcom,micbias1-microvolt = <2750000>;
+		qcom,micbias2-microvolt = <2750000>;
+		qcom,micbias3-microvolt = <2750000>;
+		qcom,micbias4-microvolt = <2750000>;
+		qcom,rx-device = <&wcd_rx>;
+		qcom,tx-device = <&wcd_tx>;
+
+		reset-gpios = <&tlmm 43 GPIO_ACTIVE_LOW>;
+
+		vdd-buck-supply = <&vreg_s10b_1p8>;
+		vdd-rxtx-supply = <&vreg_s10b_1p8>;
+		vdd-io-supply = <&vreg_s10b_1p8>;
+		vdd-mic-bias-supply = <&vreg_bob>;
+
+		#sound-dai-cells = <1>;
+	};
+
+	chosen {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		/* Continuous-splash buffer set up by ABL, 1440x3200 */
+		framebuffer: framebuffer@b8000000 {
+			compatible = "simple-framebuffer";
+			reg = <0x0 0xb8000000 0x0 0x2b00000>;
+			width = <1440>;
+			height = <3200>;
+			stride = <(1440 * 4)>;
+			format = "a8r8g8b8";
+
+			clocks = <&gcc GCC_DISP_HF_AXI_CLK>;
+		};
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+
+		pinctrl-0 = <&vol_up_n>;
+		pinctrl-names = "default";
+
+		key-volume-up {
+			label = "Volume Up";
+			gpios = <&pm8350_gpios 6 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_VOLUMEUP>;
+			debounce-interval = <15>;
+			linux,can-disable;
+			wakeup-source;
+		};
+	};
+
+	reserved-memory {
+		xbl_ramdump_mem: memory@a6b80000 {
+			reg = <0x0 0xa6b80000 0x0 0x280000>;
+			no-map;
+		};
+
+		xbl_sc_mem: memory@a6e00000 {
+			reg = <0x0 0xa6e00000 0x0 0x40000>;
+			no-map;
+		};
+
+		/* Modem EFS shared memory (vendor qcom,rmtfs_sharedmem: 0x280000) */
+		rmtfs_mem: memory@f8700000 {
+			compatible = "qcom,rmtfs-mem";
+			reg = <0x0 0xf8700000 0x0 0x280000>;
+			no-map;
+
+			qcom,client-id = <1>;
+			qcom,vmid = <QCOM_SCM_VMID_MSS_MSA>;
+		};
+
+		/* vendor adsp_region@9fd00000 (0x3100000) */
+		adsp_mem: memory@9fd00000 {
+			reg = <0x0 0x9fd00000 0x0 0x3100000>;
+			no-map;
+		};
+
+		/* Remote heap of the ADSP audio PD (vendor adsp_heap_region) */
+		adsp_rpc_remote_heap_mem: adsp-rpc-remote-heap {
+			compatible = "shared-dma-pool";
+			alloc-ranges = <0x0 0x0 0x0 0xffffffff>;
+			reusable;
+			alignment = <0x0 0x400000>;
+			size = <0x0 0xc00000>;
+		};
+
+		/* Same location and layout as the vendor ramoops */
+		ramoops@a7000000 {
+			compatible = "ramoops";
+			reg = <0x0 0xa7000000 0x0 0x400000>;
+			console-size = <0x200000>;
+			pmsg-size = <0x200000>;
+		};
+
+		splash_mem: memory@b8000000 {
+			reg = <0x0 0xb8000000 0x0 0x2b00000>;
+			no-map;
+		};
+	};
+
+	/*
+	 * Panel analog supply, switched by TLMM 186 (vendor
+	 * display_panel_avdd_default, output-high while the display is on).
+	 */
+	panel_vci: regulator-panel-vci {
+		compatible = "regulator-fixed";
+		regulator-name = "panel_vci";
+		regulator-min-microvolt = <3000000>;
+		regulator-max-microvolt = <3000000>;
+		gpio = <&tlmm 186 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		regulator-boot-on;
+
+		pinctrl-0 = <&panel_vci_en>;
+		pinctrl-names = "default";
+	};
+
+	vph_pwr: regulator-vph-pwr {
+		compatible = "regulator-fixed";
+		regulator-name = "vph_pwr";
+		regulator-min-microvolt = <3700000>;
+		regulator-max-microvolt = <3700000>;
+
+		regulator-always-on;
+		regulator-boot-on;
+	};
+};
+
+&apps_rsc {
+	/*
+	 * Minimum voltages are the vendor boot-time (qcom,init-voltage)
+	 * values, maxima the vendor DT constraints of the thor unit.
+	 */
+	regulators-0 {
+		compatible = "qcom,pm8350-rpmh-regulators";
+		qcom,pmic-id = "b";
+
+		vreg_s10b_1p8: smps10 {
+			regulator-name = "vreg_s10b_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+		};
+
+		vreg_s11b_0p95: smps11 {
+			regulator-name = "vreg_s11b_0p95";
+			regulator-min-microvolt = <952000>;
+			regulator-max-microvolt = <1170000>;
+		};
+
+		vreg_s12b_1p25: smps12 {
+			regulator-name = "vreg_s12b_1p25";
+			regulator-min-microvolt = <1350000>;
+			regulator-max-microvolt = <2040000>;
+		};
+
+		vreg_l1b_0p91: ldo1 {
+			regulator-name = "vreg_l1b_0p91";
+			regulator-min-microvolt = <912000>;
+			regulator-max-microvolt = <920000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l2b_3p07: ldo2 {
+			regulator-name = "vreg_l2b_3p07";
+			regulator-min-microvolt = <3072000>;
+			regulator-max-microvolt = <3300000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l3b_0p9: ldo3 {
+			regulator-name = "vreg_l3b_0p9";
+			regulator-min-microvolt = <904000>;
+			regulator-max-microvolt = <970000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l5b_0p88: ldo5 {
+			regulator-name = "vreg_l5b_0p88";
+			regulator-min-microvolt = <880000>;
+			regulator-max-microvolt = <958000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l6b_1p2: ldo6 {
+			regulator-name = "vreg_l6b_1p2";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1216000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l7b_2p5: ldo7 {
+			regulator-name = "vreg_l7b_2p5";
+			regulator-min-microvolt = <2504000>;
+			regulator-max-microvolt = <3544000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l9b_1p2: ldo9 {
+			regulator-name = "vreg_l9b_1p2";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1304000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+	};
+
+	regulators-1 {
+		compatible = "qcom,pm8350c-rpmh-regulators";
+		qcom,pmic-id = "c";
+
+		vreg_s1c_1p86: smps1 {
+			regulator-name = "vreg_s1c_1p86";
+			regulator-min-microvolt = <1880000>;
+			regulator-max-microvolt = <2024000>;
+		};
+
+		vreg_s10c_1p05: smps10 {
+			regulator-name = "vreg_s10c_1p05";
+			regulator-min-microvolt = <1052000>;
+			regulator-max-microvolt = <1170000>;
+		};
+
+		vreg_bob: bob {
+			regulator-name = "vreg_bob";
+			regulator-min-microvolt = <3008000>;
+			regulator-max-microvolt = <3960000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_AUTO>;
+		};
+
+		vreg_l1c_1p8: ldo1 {
+			regulator-name = "vreg_l1c_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* Touch I/O supply (vendor fts vdd-supply: l2c) */
+		vreg_l2c_1p8: ldo2 {
+			regulator-name = "vreg_l2c_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1980000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* vendor thor: 2700000..3544000, init 2700000 */
+		vreg_l3c_2p7: ldo3 {
+			regulator-name = "vreg_l3c_2p7";
+			regulator-min-microvolt = <2700000>;
+			regulator-max-microvolt = <3544000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l4c_1p8: ldo4 {
+			regulator-name = "vreg_l4c_1p8";
+			regulator-min-microvolt = <1620000>;
+			regulator-max-microvolt = <3300000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l5c_1p8: ldo5 {
+			regulator-name = "vreg_l5c_1p8";
+			regulator-min-microvolt = <1620000>;
+			regulator-max-microvolt = <3300000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l6c_2p96: ldo6 {
+			regulator-name = "vreg_l6c_2p96";
+			regulator-min-microvolt = <2960000>;
+			regulator-max-microvolt = <3544000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* vendor thor: 3000000..3304000, init 3304000 */
+		vreg_l7c_3p3: ldo7 {
+			regulator-name = "vreg_l7c_3p3";
+			regulator-min-microvolt = <3000000>;
+			regulator-max-microvolt = <3304000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l8c_1p8: ldo8 {
+			regulator-name = "vreg_l8c_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <2000000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* Touch analog supply (vendor fts avdd-supply: l9c, fixed 3.3 V) */
+		vreg_l9c_3p3: ldo9 {
+			regulator-name = "vreg_l9c_3p3";
+			regulator-min-microvolt = <3300000>;
+			regulator-max-microvolt = <3300000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l10c_1p2: ldo10 {
+			regulator-name = "vreg_l10c_1p2";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1304000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* vendor thor: fixed 3008000 */
+		vreg_l11c_3p0: ldo11 {
+			regulator-name = "vreg_l11c_3p0";
+			regulator-min-microvolt = <3008000>;
+			regulator-max-microvolt = <3008000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* Panel vddio (1.8 V; vendor max 1800000 on thor) */
+		vreg_l12c_1p8: ldo12 {
+			regulator-name = "vreg_l12c_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l13c_3p0: ldo13 {
+			regulator-name = "vreg_l13c_3p0";
+			regulator-min-microvolt = <3000000>;
+			regulator-max-microvolt = <3000000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+	};
+
+	regulators-2 {
+		compatible = "qcom,pm8450-rpmh-regulators";
+		qcom,pmic-id = "h";
+
+		vreg_s3h_0p5: smps3 {
+			regulator-name = "vreg_s3h_0p5";
+			regulator-min-microvolt = <504000>;
+			regulator-max-microvolt = <570000>;
+		};
+
+		vreg_l2h_0p82: ldo2 {
+			regulator-name = "vreg_l2h_0p82";
+			regulator-min-microvolt = <820000>;
+			regulator-max-microvolt = <958000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l3h_0p87: ldo3 {
+			regulator-name = "vreg_l3h_0p87";
+			regulator-min-microvolt = <866000>;
+			regulator-max-microvolt = <958000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+	};
+
+	regulators-3 {
+		compatible = "qcom,pmr735a-rpmh-regulators";
+		qcom,pmic-id = "e";
+
+		/* WLAN aon / WCN6855 PMU MX */
+		vreg_s2e_0p5: smps2 {
+			regulator-name = "vreg_s2e_0p5";
+			regulator-min-microvolt = <1012000>;
+			regulator-max-microvolt = <1040000>;
+		};
+
+		vreg_s3e_0p3: smps3 {
+			regulator-name = "vreg_s3e_0p3";
+			regulator-min-microvolt = <300000>;
+			regulator-max-microvolt = <2352000>;
+		};
+
+		vreg_l1e_0p8: ldo1 {
+			regulator-name = "vreg_l1e_0p8";
+			regulator-min-microvolt = <800000>;
+			regulator-max-microvolt = <880000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l2e_0p48: ldo2 {
+			regulator-name = "vreg_l2e_0p48";
+			regulator-min-microvolt = <480000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l3e_1p2: ldo3 {
+			regulator-name = "vreg_l3e_1p2";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l4e_1p78: ldo4 {
+			regulator-name = "vreg_l4e_1p78";
+			regulator-min-microvolt = <1776000>;
+			regulator-max-microvolt = <1776000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l5e_0p88: ldo5 {
+			regulator-name = "vreg_l5e_0p88";
+			regulator-min-microvolt = <880000>;
+			regulator-max-microvolt = <920000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l6e_1p2: ldo6 {
+			regulator-name = "vreg_l6e_1p2";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l7e_2p8: ldo7 {
+			regulator-name = "vreg_l7e_2p8";
+			regulator-min-microvolt = <2800000>;
+			regulator-max-microvolt = <2800000>;
+			regulator-always-on;
+		};
+	};
+};
+
+&gpi_dma0 {
+	status = "okay";
+};
+
+&gpi_dma1 {
+	status = "okay";
+};
+
+&gpi_dma2 {
+	status = "okay";
+};
+
+&i2c5 {
+	clock-frequency = <100000>;
+	status = "okay";
+
+	/*
+	 * eUSB2 repeater (vendor "nxp,eusb2-repeater" at 0x4f on
+	 * qupv3_se5_i2c = i2c@994000 = &i2c5); PTN3222 as on Diting.
+	 */
+	eusb2_repeater: redriver@4f {
+		compatible = "nxp,ptn3222";
+		reg = <0x4f>;
+		#phy-cells = <0>;
+
+		vdd3v3-supply = <&vreg_l2b_3p07>;
+		vdd1v8-supply = <&vreg_s10b_1p8>;
+
+		reset-gpios = <&pm8350c_gpios 7 GPIO_ACTIVE_LOW>;
+
+		pinctrl-0 = <&eusb2_reset_n>;
+		pinctrl-names = "default";
+	};
+};
+
+&ipa {
+	qcom,gsi-loader = "self";
+	memory-region = <&ipa_gsi_mem>;
+	firmware-name = "qcom/sm8475/xiaomi/thor/ipa_fws.mbn";
+
+	status = "okay";
+};
+
+&iris {
+	firmware-name = "qcom/sm8475/xiaomi/thor/vpu20_4v.mbn";
+
+	status = "okay";
+};
+
+&remoteproc_slpi {
+	/* vendor slpi_region@88000000 (0x1900000), as the SM8450 default */
+	firmware-name = "qcom/sm8475/xiaomi/thor/slpi.mbn";
+	status = "okay";
+};
+
+&{/smp2p-slpi} {
+	smp2p_slpi_sleepstate_out: sleepstate {
+		qcom,entry-name = "sleepstate";
+		#qcom,smem-state-cells = <1>;
+	};
+};
+
+/ {
+	smp2p-sleepstate {
+		compatible = "qcom,smp2p-sleepstate";
+		qcom,smem-states = <&smp2p_slpi_sleepstate_out 0>;
+	};
+};
+
+&remoteproc_mpss {
+	firmware-name = "qcom/sm8475/xiaomi/thor/modem.mbn";
+	status = "okay";
+};
+
+&remoteproc_cdsp {
+	/* vendor cdsp_region@89900000 (0x2000000) */
+	firmware-name = "qcom/sm8475/xiaomi/thor/cdsp.mbn";
+	status = "okay";
+};
+
+&remoteproc_adsp {
+	firmware-name = "qcom/sm8475/xiaomi/thor/adsp.mbn";
+	status = "okay";
+
+	glink-edge {
+		fastrpc {
+			memory-region = <&adsp_rpc_remote_heap_mem>;
+			qcom,vmids = <QCOM_SCM_VMID_LPASS QCOM_SCM_VMID_ADSP_HEAP>;
+		};
+	};
+};
+
+&gpu {
+	status = "okay";
+
+	zap-shader {
+		firmware-name = "qcom/sm8475/xiaomi/thor/a730_zap.mbn";
+	};
+};
+
+&mdss {
+	status = "okay";
+};
+
+&mdss_dsi0 {
+	vdda-supply = <&vreg_l10c_1p2>;
+	status = "okay";
+
+	panel@0 {
+		compatible = "xiaomi,l1-38-0c-0a";
+		reg = <0>;
+
+		/* vendor qcom,platform-reset-gpio = <&tlmm 106> */
+		reset-gpios = <&tlmm 106 GPIO_ACTIVE_LOW>;
+
+		vddio-supply = <&vreg_l12c_1p8>;
+		vci-supply = <&panel_vci>;
+
+		pinctrl-0 = <&panel_reset_active>, <&panel_te>;
+		pinctrl-1 = <&panel_reset_suspend>, <&panel_te>;
+		pinctrl-names = "default", "sleep";
+
+		port {
+			panel_in: endpoint {
+				remote-endpoint = <&mdss_dsi0_out>;
+			};
+		};
+	};
+};
+
+&mdss_dsi0_out {
+	data-lanes = <0 1 2 3>;
+	remote-endpoint = <&panel_in>;
+};
+
+&mdss_dsi0_phy {
+	vdds-supply = <&vreg_l5b_0p88>;
+	status = "okay";
+};
+
+&pm8350_gpios {
+	vol_up_n: vol-up-n-state {
+		pins = "gpio6";
+		function = PMIC_GPIO_FUNC_NORMAL;
+		power-source = <1>;
+		bias-pull-up;
+		input-enable;
+	};
+};
+
+&pm8350c_gpios {
+	eusb2_reset_n: eusb2-reset-n-state {
+		pins = "gpio7";
+		function = PMIC_GPIO_FUNC_NORMAL;
+		power-source = <1>;
+		qcom,drive-strength = <PMIC_GPIO_STRENGTH_MED>;
+		bias-disable;
+		output-enable;
+	};
+};
+
+&pon_pwrkey {
+	status = "okay";
+};
+
+&pon_resin {
+	linux,code = <KEY_VOLUMEDOWN>;
+	status = "okay";
+};
+
+&qupv3_id_0 {
+	status = "okay";
+};
+
+&qupv3_id_1 {
+	status = "okay";
+};
+
+&qupv3_id_2 {
+	status = "okay";
+};
+
+/*
+ * Touchscreen: STMicro FTS on QUP SE4 SPI (vendor spi@990000), the same
+ * wiring as Diting (IRQ TLMM 21, reset TLMM 20, avdd L9C, vdd L2C).
+ * The firmware reports 10x the panel resolution ("super resolution").
+ */
+&spi4 {
+	status = "okay";
+
+	touchscreen@0 {
+		compatible = "st,ftm5-spi";
+		reg = <0>;
+		spi-max-frequency = <12000000>;
+
+		interrupts-extended = <&tlmm 21 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 20 GPIO_ACTIVE_LOW>;
+
+		vdd-supply = <&vreg_l2c_1p8>;
+		avdd-supply = <&vreg_l9c_3p3>;
+
+		touchscreen-size-x = <14400>;
+		touchscreen-size-y = <32000>;
+
+		pinctrl-0 = <&ts_int_reset>;
+		pinctrl-names = "default";
+	};
+};
+
+/*
+ * Loudspeaker amplifiers: CS35L41 on QUP SE15 (vendor i2c@880000) at
+ * 0x42 (B) and 0x43 (T), 400 kHz like Diting for the firmware blocks.
+ */
+&i2c15 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	/* vendor cs35l41@42: reset TLMM 24, IRQ TLMM 63 */
+	spk_amp_b: speaker-amp@42 {
+		compatible = "cirrus,cs35l41";
+		reg = <0x42>;
+		interrupts-extended = <&tlmm 63 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 24 GPIO_ACTIVE_HIGH>;
+		pinctrl-0 = <&spk_amp_b_reset>, <&spk_amp_b_irq>;
+		pinctrl-names = "default";
+		cirrus,boost-type = <0>;
+		cirrus,boost-peak-milliamp = <4000>;
+		cirrus,boost-ind-nanohenry = <1000>;
+		cirrus,boost-cap-microfarad = <15>;
+		cirrus,asp-sdout-hiz = <3>;
+		cirrus,gpio2-src-select = <4>;
+		cirrus,gpio2-output-enable;
+		cirrus,subsystem-id = "thor";
+		sound-name-prefix = "B";
+		#sound-dai-cells = <1>;
+	};
+
+	/* vendor cs35l41@43: reset TLMM 66, IRQ TLMM 88 */
+	spk_amp_t: speaker-amp@43 {
+		compatible = "cirrus,cs35l41";
+		reg = <0x43>;
+		interrupts-extended = <&tlmm 88 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 66 GPIO_ACTIVE_HIGH>;
+		pinctrl-0 = <&spk_amp_t_reset>, <&spk_amp_t_irq>;
+		pinctrl-names = "default";
+		cirrus,boost-type = <0>;
+		cirrus,boost-peak-milliamp = <4000>;
+		cirrus,boost-ind-nanohenry = <1000>;
+		cirrus,boost-cap-microfarad = <15>;
+		cirrus,asp-sdout-hiz = <3>;
+		cirrus,gpio2-src-select = <4>;
+		cirrus,gpio2-output-enable;
+		cirrus,subsystem-id = "thor";
+		sound-name-prefix = "T";
+		#sound-dai-cells = <1>;
+	};
+};
+
+/*
+ * Loudspeakers: tertiary LPAIF I2S to both CS35L41.
+ * Topology: qcom/sm8450/XIAOMI-THOR-tplg.bin (Diting topology initially).
+ */
+&sound {
+	compatible = "qcom,sm8450-sndcard";
+	model = "XIAOMI-THOR";
+
+	pinctrl-0 = <&tert_mi2s_active>;
+	pinctrl-names = "default";
+
+	/* bit clock, enabled before the amplifiers lock their PLL to it */
+	clocks = <&q6prmcc LPASS_CLK_ID_TER_TDM_IBIT LPASS_CLK_ATTRIBUTE_INVERT_COUPLE_NO>;
+	clock-names = "tertiary-mi2s";
+
+	audio-routing = "AMIC1", "MIC BIAS1",
+			"AMIC5", "MIC BIAS4",
+			"TX SWR_INPUT0", "ADC1_OUTPUT",
+			"TX SWR_INPUT1", "ADC4_OUTPUT";
+
+	speaker-playback-dai-link {
+		link-name = "Speaker Playback";
+
+		cpu {
+			sound-dai = <&q6apmbedai TERTIARY_TDM_RX_0>;
+		};
+
+		codec {
+			sound-dai = <&spk_amp_t 0>, <&spk_amp_b 0>;
+		};
+
+		platform {
+			sound-dai = <&q6apm>;
+		};
+	};
+
+	mic-capture-dai-link {
+		link-name = "Mic Capture";
+
+		cpu {
+			sound-dai = <&q6apmbedai TX_CODEC_DMA_TX_3>;
+		};
+
+		codec {
+			sound-dai = <&wcd938x 1>, <&swr2 0>, <&txmacro 0>;
+		};
+
+		platform {
+			sound-dai = <&q6apm>;
+		};
+	};
+};
+
+&lpass_tlmm {
+	status = "okay";
+};
+
+&rxmacro {
+	status = "okay";
+};
+
+&swr1 {
+	status = "okay";
+
+	wcd_rx: codec@0,4 {
+		compatible = "sdw20217010d00";
+		reg = <0 4>;
+		qcom,rx-port-mapping = <1 2 3 4 5>;
+	};
+};
+
+&swr2 {
+	status = "okay";
+
+	wcd_tx: codec@0,3 {
+		compatible = "sdw20217010d00";
+		reg = <0 3>;
+		qcom,tx-port-mapping = <1 1 2 3>;
+	};
+};
+
+&txmacro {
+	status = "okay";
+};
+
+&vamacro {
+	status = "okay";
+};
+
+/* Read-only RTC (Android keeps the offset in userspace); wake alarms */
+&pmk8350_rtc {
+	status = "okay";
+};
+
+&pcie0 {
+	max-link-speed = <2>;
+	status = "okay";
+};
+
+/* vendor pcie0 vreg-0p9 = pm8350 L5, vreg-1p8 = pm8350c L10 at 1.2 V */
+&pcie0_phy {
+	vdda-phy-supply = <&vreg_l5b_0p88>;
+	vdda-pll-supply = <&vreg_l10c_1p2>;
+	status = "okay";
+};
+
+/* QCA6490 (WCN6855 family) as on Diting */
+&pcieport0 {
+	wifi@0 {
+		compatible = "pci17cb,1103";
+		reg = <0x10000 0x0 0x0 0x0 0x0>;
+
+		qcom,calibration-variant = "Xiaomi_thor";
+
+		vddrfacmn-supply = <&vreg_pmu_rfa_cmn_0p8>;
+		vddaon-supply = <&vreg_pmu_aon_0p8>;
+		vddwlcx-supply = <&vreg_pmu_wlcx_0p8>;
+		vddwlmx-supply = <&vreg_pmu_wlmx_0p8>;
+		vddpcie1p8-supply = <&vreg_pmu_pcie_1p8>;
+		vddpcie0p9-supply = <&vreg_pmu_pcie_0p9>;
+		vddrfa0p8-supply = <&vreg_pmu_rfa_0p8>;
+		vddrfa1p2-supply = <&vreg_pmu_rfa_1p2>;
+		vddrfa1p8-supply = <&vreg_pmu_rfa_1p7>;
+	};
+};
+
+/* Bluetooth UART: vendor qcom,qup_uart@894000 (QUP SE20) */
+&uart20 {
+	pinctrl-0 = <&uart20_default>;
+	pinctrl-names = "default";
+	status = "okay";
+
+	bluetooth {
+		compatible = "qcom,wcn6855-bt";
+
+		vddrfacmn-supply = <&vreg_pmu_rfa_cmn_0p8>;
+		vddaon-supply = <&vreg_pmu_aon_0p8>;
+		vddwlcx-supply = <&vreg_pmu_wlcx_0p8>;
+		vddwlmx-supply = <&vreg_pmu_wlmx_0p8>;
+		vddbtcmx-supply = <&vreg_pmu_btcmx_0p8>;
+		vddrfa0p8-supply = <&vreg_pmu_rfa_0p8>;
+		vddrfa1p2-supply = <&vreg_pmu_rfa_1p2>;
+		vddrfa1p7-supply = <&vreg_pmu_rfa_1p7>;
+
+		firmware-name = "thor/hpnv21", "thor/hpbtfw21.tlv";
+	};
+};
+
+&tlmm {
+	/* Secure-world owned, per qcom,gpios-reserved in the vendor DT */
+	gpio-reserved-ranges = <28 4>, <36 4>;
+
+	spk_amp_b_reset: spk-amp-b-reset-state {
+		pins = "gpio24";
+		function = "gpio";
+		drive-strength = <16>;
+		bias-disable;
+	};
+
+	spk_amp_t_reset: spk-amp-t-reset-state {
+		pins = "gpio66";
+		function = "gpio";
+		drive-strength = <16>;
+		bias-disable;
+	};
+
+	wcd_default: wcd-reset-n-active-state {
+		pins = "gpio43";
+		function = "gpio";
+		drive-strength = <16>;
+		bias-disable;
+		output-low;
+	};
+
+	spk_amp_b_irq: spk-amp-b-irq-state {
+		pins = "gpio63";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	spk_amp_t_irq: spk-amp-t-irq-state {
+		pins = "gpio88";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	/* vendor tert_tdm pins (lpaif tertiary = mi2s2), as on Diting */
+	tert_mi2s_active: tert-mi2s-active-state {
+		sck-pins {
+			pins = "gpio121";
+			function = "mi2s2_sck";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		data0-pins {
+			pins = "gpio122";
+			function = "mi2s2_data0";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		ws-pins {
+			pins = "gpio123";
+			function = "mi2s2_ws";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		data1-pins {
+			pins = "gpio124";
+			function = "mi2s2_data1";
+			drive-strength = <8>;
+			bias-disable;
+		};
+	};
+
+	bt_en: bt-en-state {
+		pins = "gpio81";
+		function = "gpio";
+		drive-strength = <16>;
+		output-low;
+		bias-pull-down;
+	};
+
+	wlan_en: wlan-en-state {
+		pins = "gpio80";
+		function = "gpio";
+		drive-strength = <16>;
+		output-low;
+		bias-pull-down;
+	};
+
+	xo_clk_default: xo-clk-state {
+		pins = "gpio204";
+		function = "gpio";
+		drive-strength = <16>;
+		output-low;
+		bias-pull-down;
+	};
+
+	uart20_default: uart20-default-state {
+		cts-pins {
+			pins = "gpio76";
+			function = "qup20";
+			drive-strength = <2>;
+			bias-disable;
+		};
+
+		rts-pins {
+			pins = "gpio77";
+			function = "qup20";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+
+		tx-pins {
+			pins = "gpio78";
+			function = "qup20";
+			drive-strength = <2>;
+			bias-pull-up;
+		};
+
+		rx-pins {
+			pins = "gpio79";
+			function = "qup20";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	ts_int_reset: ts-int-reset-state {
+		pins = "gpio20", "gpio21";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-pull-up;
+	};
+
+	/* vendor pmx_sde: panel reset on TLMM 106 */
+	panel_reset_active: panel-reset-active-state {
+		pins = "gpio106";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	panel_reset_suspend: panel-reset-suspend-state {
+		pins = "gpio106";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
+	panel_te: panel-te-state {
+		pins = "gpio86";
+		function = "mdp_vsync";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
+	/* vendor display_panel_avdd_default on TLMM 186 */
+	panel_vci_en: panel-vci-en-state {
+		pins = "gpio186";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-disable;
+		output-high;
+	};
+};
+
+&ufs_mem_hc {
+	reset-gpios = <&tlmm 210 GPIO_ACTIVE_LOW>;
+
+	vcc-supply = <&vreg_l7b_2p5>;
+	vcc-max-microamp = <1100000>;
+	vccq-supply = <&vreg_l9b_1p2>;
+	vccq-max-microamp = <1200000>;
+
+	status = "okay";
+};
+
+&ufs_mem_phy {
+	vdda-phy-supply = <&vreg_l5b_0p88>;
+	vdda-pll-supply = <&vreg_l10c_1p2>;
+
+	status = "okay";
+};
+
+&usb_1 {
+	/* Only the eUSB2 path is wired up so far; no USB3/DP, no role switch */
+	dr_mode = "peripheral";
+	maximum-speed = "high-speed";
+	qcom,select-utmi-as-pipe-clk;
+
+	phys = <&usb_1_hsphy>;
+	phy-names = "usb2-phy";
+
+	status = "okay";
+};
+
+&usb_1_hsphy {
+	vdd-supply = <&vreg_l5b_0p88>;
+	vdda12-supply = <&vreg_l10c_1p2>;
+
+	phys = <&eusb2_repeater>;
+
+	status = "okay";
+};
+
+/ {
+	/*
+	 * Battery, charger and USB-C state come from the ADSP firmware
+	 * (vendor pmic_glink: battery_charger, ucsi). The USB port stays a
+	 * fixed peripheral for the debug link for now.
+	 */
+	pmic-glink {
+		compatible = "qcom,sm8450-pmic-glink", "qcom,pmic-glink";
+		#address-cells = <1>;
+		#size-cells = <0>;
+	};
+
+	aliases {
+		serial1 = &uart20;	/* qcom_geni_serial needs a line number */
+	};
+
+	/* WLAN_EN 80, BT_EN 81, SW_CTRL 82, XO_CLK 204: vendor cnss/bt nodes */
+	wcn6855-pmu {
+		compatible = "qcom,wcn6855-pmu";
+
+		pinctrl-0 = <&bt_en>, <&wlan_en>, <&xo_clk_default>;
+		pinctrl-names = "default";
+
+		wlan-enable-gpios = <&tlmm 80 GPIO_ACTIVE_HIGH>;
+		bt-enable-gpios = <&tlmm 81 GPIO_ACTIVE_HIGH>;
+		swctrl-gpios = <&tlmm 82 GPIO_ACTIVE_HIGH>;
+		xo-clk-gpios = <&tlmm 204 GPIO_ACTIVE_HIGH>;
+
+		vddio-supply = <&vreg_s10b_1p8>;
+		vddaon-supply = <&vreg_s11b_0p95>;
+		vddpmu-supply = <&vreg_s12b_1p25>;
+		vddpmumx-supply = <&vreg_s2e_0p5>;
+		vddpmucx-supply = <&vreg_s11b_0p95>;
+		vddrfa0p95-supply = <&vreg_s11b_0p95>;
+		vddrfa1p3-supply = <&vreg_s12b_1p25>;
+		vddrfa1p9-supply = <&vreg_s1c_1p86>;
+		vddpcie1p3-supply = <&vreg_s12b_1p25>;
+		vddpcie1p9-supply = <&vreg_s1c_1p86>;
+
+		regulators {
+			vreg_pmu_rfa_cmn_0p8: ldo0 {
+				regulator-name = "vreg_pmu_rfa_cmn_0p8";
+			};
+
+			vreg_pmu_aon_0p8: ldo1 {
+				regulator-name = "vreg_pmu_aon_0p8";
+			};
+
+			vreg_pmu_wlcx_0p8: ldo2 {
+				regulator-name = "vreg_pmu_wlcx_0p8";
+			};
+
+			vreg_pmu_wlmx_0p8: ldo3 {
+				regulator-name = "vreg_pmu_wlmx_0p8";
+			};
+
+			vreg_pmu_btcmx_0p8: ldo4 {
+				regulator-name = "vreg_pmu_btcmx_0p8";
+			};
+
+			vreg_pmu_pcie_1p8: ldo5 {
+				regulator-name = "vreg_pmu_pcie_1p8";
+			};
+
+			vreg_pmu_pcie_0p9: ldo6 {
+				regulator-name = "vreg_pmu_pcie_0p9";
+			};
+
+			vreg_pmu_rfa_0p8: ldo7 {
+				regulator-name = "vreg_pmu_rfa_0p8";
+			};
+
+			vreg_pmu_rfa_1p2: ldo8 {
+				regulator-name = "vreg_pmu_rfa_1p2";
+			};
+
+			vreg_pmu_rfa_1p7: ldo9 {
+				regulator-name = "vreg_pmu_rfa_1p7";
+			};
+		};
+	};
+};

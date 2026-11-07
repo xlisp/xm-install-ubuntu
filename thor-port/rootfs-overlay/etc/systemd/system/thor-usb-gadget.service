@@ -1,0 +1,13 @@
+[Unit]
+Description=Xiaomi Thor USB gadget (NCM network + ACM serial)
+After=systemd-modules-load.service
+Before=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/thor-usb-gadget start
+ExecStop=/usr/local/sbin/thor-usb-gadget stop
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

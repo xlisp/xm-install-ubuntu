@@ -1,0 +1,34 @@
+#!/bin/sh
+# First-boot bring-up: grow the rootfs into the partition, create ssh host
+# keys, install the flash-time authorized key and mark done.
+set -e
+
+# The image was built on macOS, so every inode carries the build user's
+# uid. Claim the whole tree for root before anything reads it.
+for d in /bin /etc /home /lib /lib64 /opt /root /sbin /srv /tmp /usr /var; do
+	[ -e "$d" ] && chown -R root:root "$d" 2>/dev/null || true
+done
+
+rootdev="$(findmnt -n -o SOURCE / 2>/dev/null || true)"
+[ -n "$rootdev" ] || rootdev=/dev/sda36
+
+# Grow the filesystem into the (much larger) userdata partition.
+resize2fs "$rootdev" >/dev/null 2>&1 || true
+
+# Machine id for systemd/journald.
+if [ ! -s /etc/machine-id ]; then
+	head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n' > /etc/machine-id
+fi
+
+# SSH host keys (openssh-server preinstalled; do it here, not at image build).
+ssh-keygen -A
+
+# The key the build host dropped at flash time.
+if [ -f /root/.ssh/authorized_keys.flash ]; then
+	mkdir -p /root/.ssh
+	mv /root/.ssh/authorized_keys.flash /root/.ssh/authorized_keys
+	chmod 600 /root/.ssh/authorized_keys
+fi
+
+touch /boot/thor-first-boot-done
+echo "thor first boot complete" | systemd-cat -p info

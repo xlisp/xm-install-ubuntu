@@ -1,0 +1,12 @@
+[Unit]
+Description=Thor firmware extraction from Android partitions (read-only)
+After=local-fs.target
+ConditionPathExists=!/var/lib/thor-firmware-setup/done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/thor-firmware-setup
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,58 @@
+#!/bin/sh
+# Configure a USB gadget (NCM network + ACM serial) through configfs.
+#   thor-usb-gadget start|stop
+set -e
+
+G=/sys/kernel/config/usb_gadget/thor
+ADDR="172.16.42.1/24"
+
+start() {
+	[ -d /sys/kernel/config/usb_gadget ] ||
+		mount -t configfs none /sys/kernel/config 2>/dev/null || true
+	[ -d /sys/kernel/config/usb_gadget ] || { echo "no configfs usb_gadget" >&2; return 1; }
+	udc=""
+	for u in /sys/class/udc/*; do
+		[ -e "$u" ] && { udc="${u##*/}"; break; }
+	done
+	[ -n "$udc" ] || { echo "no UDC registered (dwc3 not up?)" >&2; return 1; }
+	[ -d "$G" ] && { configure; return 0; }
+
+	mkdir -p "$G"
+	echo 0x1d6b > "$G/idVendor"	# Linux Foundation
+	echo 0x0104 > "$G/idProduct"	# Multifunction Composite Gadget
+	mkdir -p "$G/strings/0x409"
+	echo "Xiaomi" > "$G/strings/0x409/manufacturer"
+	echo "Thor Ubuntu debug" > "$G/strings/0x409/product"
+	echo "thor" > "$G/strings/0x409/serialnumber"
+	mkdir -p "$G/configs/c.1/strings/0x409"
+	echo "NCM + ACM" > "$G/configs/c.1/strings/0x409/configuration"
+	mkdir -p "$G/functions/ncm.usb0" "$G/functions/acm.GS0"
+	ln -s "$G/functions/ncm.usb0" "$G/configs/c.1/"
+	ln -s "$G/functions/acm.GS0" "$G/configs/c.1/"
+	echo "$udc" > "$G/UDC"
+	configure
+}
+
+configure() {
+	ifname="$(cat "$G/functions/ncm.usb0/ifname" 2>/dev/null || echo usb0)"
+	ip link set "$ifname" up 2>/dev/null || true
+	ip addr add "$ADDR" dev "$ifname" 2>/dev/null || true
+}
+
+stop() {
+	[ -d "$G" ] || return 0
+	case "$(systemctl is-system-running 2>/dev/null)" in
+	stopping) echo "shutting down: gadget left bound"; return 0 ;;
+	esac
+	echo "" > "$G/UDC" 2>/dev/null || true
+	rm -f "$G/configs/c.1/ncm.usb0" "$G/configs/c.1/acm.GS0"
+	rmdir "$G/configs/c.1/strings/0x409" "$G/configs/c.1" \
+		"$G/functions/ncm.usb0" "$G/functions/acm.GS0" \
+		"$G/strings/0x409" "$G" 2>/dev/null || true
+}
+
+case "${1:-}" in
+start) start ;;
+stop) stop ;;
+*) echo "usage: $0 start|stop" >&2; exit 2 ;;
+esac

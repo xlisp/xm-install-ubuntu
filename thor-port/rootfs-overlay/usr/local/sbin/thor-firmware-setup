@@ -1,0 +1,46 @@
+#!/bin/bash
+# Extract remoteproc firmware from this phone's own Android partitions.
+# The modem_<slot> FAT partition carries the signed mdt+bNN images for the
+# modem and the DSPs; the mainline qcom_mdt loader resolves
+# <name>.mdt/<name>bNN automatically when firmware-name ends in .mbn.
+#
+# Run once (thor-firmware-setup.service at first boot). Read-only: nothing
+# on the Android partitions is written.
+set -eu
+
+DEST=/lib/firmware/qcom/sm8475/xiaomi/thor
+STATE=/var/lib/thor-firmware-setup
+slot=""
+say() { echo "thor-firmware-setup: $*"; }
+
+# active slot from the kernel cmdline (androidboot.slot_suffix=_a/_b)
+slot="$(sed -n 's/.*androidboot.slot_suffix=_\([ab]\).*/\1/p' /proc/cmdline | head -1)"
+[ -n "$slot" ] || slot=b
+say "reading the firmware of Android slot $slot (read-only)"
+
+part="$(readlink -e "/dev/disk/by-partlabel/modem_$slot" || true)"
+[ -n "$part" ] || { say "no modem_$slot partition"; exit 1; }
+
+work="$(mktemp -d /var/tmp/thor-firmware.XXXXXX)"
+trap 'umount "$work" 2>/dev/null || true; rm -rf "$work"' EXIT
+
+mount -o ro,shortname=lower "$part" "$work"
+mkdir -p "$DEST"
+# mdt + bNN segments for every remoteproc image on the FAT partition
+found=0
+for f in "$work"/*.mdt; do
+	[ -e "$f" ] || continue
+	base="${f%.mdt}"
+	cp "$f" "$DEST/"
+	for seg in "$base"b[0-9][0-9]; do
+		[ -e "$seg" ] || continue
+		cp "$seg" "$DEST/"
+	done
+	found=$((found + 1))
+done
+umount "$work"
+
+say "copied $found remoteproc images to $DEST"
+mkdir -p "$(dirname "$STATE")"
+touch "$STATE/done"
+say "reboot so the DSPs and modem start with their firmware"

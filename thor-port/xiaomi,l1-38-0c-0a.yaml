@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/display/panel/xiaomi,l1-38-0c-0a.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Xiaomi 12S Ultra "38 0c 0a" 1440x3200 DSC command mode AMOLED panel
+
+maintainers:
+  - Local Thor bring-up <ubuntu-thor@localhost>
+
+allOf:
+  - $ref: panel-common.yaml#
+
+properties:
+  compatible:
+    const: xiaomi,l1-38-0c-0a
+
+  reg:
+    maxItems: 1
+
+  vddio-supply:
+    description: 1.8 V I/O supply
+
+  vci-supply:
+    description: 3.0 V analog supply
+
+required:
+  - compatible
+  - reg
+  - reset-gpios
+  - vddio-supply
+  - vci-supply
+  - port
+
+unevaluatedProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/gpio/gpio.h>
+
+    dsi {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        panel@0 {
+            compatible = "xiaomi,l1-38-0c-0a";
+            reg = <0>;
+            reset-gpios = <&tlmm 106 GPIO_ACTIVE_LOW>;
+            vddio-supply = <&vreg_l12c_1p8>;
+            vci-supply = <&panel_vci>;
+
+            port {
+                panel_in: endpoint {
+                    remote-endpoint = <&mdss_dsi0_out>;
+                };
+            };
+        };
+    };
+...

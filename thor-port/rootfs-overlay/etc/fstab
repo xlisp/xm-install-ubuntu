@@ -1,0 +1,2 @@
+# root (Android userdata partition) is mounted by the kernel from root=
+/dev/sda36	/		ext4	errors=remount-ro	0	1

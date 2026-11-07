@@ -1,0 +1,13 @@
+[Unit]
+Description=Thor first-boot setup (resize rootfs, ssh keys, machine id)
+After=thor-usb-gadget.service
+Before=getty.target
+ConditionPathExists=!/boot/thor-first-boot-done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/thor-first-boot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

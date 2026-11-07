@@ -1,0 +1,112 @@
+#!/bin/bash
+# Build Android boot v4 images (boot.img + vendor_boot.img) for the Xiaomi
+# 12S Ultra (thor) from a kernel Image and the mainline DTB.
+#
+# Only WRITES FILES; never flashes. Layout facts from the Diting port
+# (identical ABL ids verified against the thor vendor DTB:
+#  qcom,msm-id <531 65536 540 65536 530 65536>, qcom,board-id <65544 0>).
+set -euo pipefail
+
+usage() {
+	cat >&2 <<U
+usage: thor-mkbootimg --kernel Image --dtb dtb --out DIR [--cmdline "args"]
+U
+	exit 2
+}
+
+kernel='' dtb='' out='' cmdline_extra='' name=''
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--kernel) kernel="$2"; shift 2 ;;
+	--dtb) dtb="$2"; shift 2 ;;
+	--out) out="$2"; shift 2 ;;
+	--cmdline) cmdline_extra="$2"; shift 2 ;;
+	--name) name="$2"; shift 2 ;;
+	*) usage ;;
+	esac
+done
+[ -n "$kernel" ] && [ -n "$dtb" ] && [ -n "$out" ] || usage
+for t in fdtput fdtget python3; do
+	command -v "$t" >/dev/null || { echo "thor-mkbootimg: needs $t" >&2; exit 1; }
+done
+
+MKBOOTIMG="${MKBOOTIMG:-/Users/xlisp/PyPro/xiaomi_install_ubuntu/downloads/mkbootimg.py}"
+
+BOOT_HEADER_VERSION=4
+BOOT_PAGESIZE=4096
+BOOT_OS_VERSION="12.0.0"
+BOOT_OS_PATCH_LEVEL="2025-09"
+VENDOR_BOOT_BASE=0x00000000
+VENDOR_BOOT_KERNEL_OFFSET=0x00008000
+VENDOR_BOOT_RAMDISK_OFFSET=0x01000000
+VENDOR_BOOT_TAGS_OFFSET=0x00000100
+VENDOR_BOOT_DTB_OFFSET=0x01f00000
+BOOT_PARTITION_SIZE=201326592
+VENDOR_BOOT_PARTITION_SIZE=100663296
+ABL_MSM_ID="531 65536 540 65536 530 65536"
+ABL_BOARD_ID="65544 0"
+ABL_SPLASH_ADDR=0xb8000000
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+# Stock kernel is an uncompressed arm64 Image; keep ours the same.
+if [ "$(od -An -tx1 -j56 -N4 "$kernel" | tr -d ' ')" != "41524d64" ]; then
+	echo "thor-mkbootimg: $kernel is not an arm64 Image" >&2
+	exit 1
+fi
+
+# ABL selects the DTB from vendor_boot by qcom,msm-id/qcom,board-id.
+cp "$dtb" "$tmp/dtb"
+# shellcheck disable=SC2086
+fdtput -t i "$tmp/dtb" / qcom,msm-id $ABL_MSM_ID
+# shellcheck disable=SC2086
+fdtput -t i "$tmp/dtb" / qcom,board-id $ABL_BOARD_ID
+
+# ABL keeps the panel powered (continuous splash) only if it finds the
+# vendor-named /reserved-memory/splash_region node.
+splash="$(fdtget -l "$tmp/dtb" /reserved-memory | grep -m1 "^memory@${ABL_SPLASH_ADDR#0x}$" || true)"
+if [ -n "$splash" ]; then
+	reg="$(fdtget -tx "$tmp/dtb" "/reserved-memory/$splash" reg)"
+	fdtput -r "$tmp/dtb" "/reserved-memory/$splash"
+	fdtput -c "$tmp/dtb" /reserved-memory/splash_region
+	# shellcheck disable=SC2086
+	fdtput -tx "$tmp/dtb" /reserved-memory/splash_region reg $reg
+	fdtput -t s "$tmp/dtb" /reserved-memory/splash_region label cont_splash_region
+	fdtput -t s "$tmp/dtb" /reserved-memory/splash_region no-map ""
+fi
+
+cmdline="console=tty0 earlycon fw_devlink.sync_state=timeout root=/dev/sda36 rw${cmdline_extra:+ $cmdline_extra}"
+mkdir -p "$out"
+suffix="${name:+-$name}"
+boot="$out/boot$suffix.img"
+vboot="$out/vendor_boot$suffix.img"
+
+python3 "$MKBOOTIMG" \
+	--header_version "$BOOT_HEADER_VERSION" \
+	--pagesize "$BOOT_PAGESIZE" \
+	--os_version "$BOOT_OS_VERSION" \
+	--os_patch_level "$BOOT_OS_PATCH_LEVEL" \
+	--base "$VENDOR_BOOT_BASE" \
+	--kernel_offset "$VENDOR_BOOT_KERNEL_OFFSET" \
+	--ramdisk_offset "$VENDOR_BOOT_RAMDISK_OFFSET" \
+	--tags_offset "$VENDOR_BOOT_TAGS_OFFSET" \
+	--dtb_offset "$VENDOR_BOOT_DTB_OFFSET" \
+	--kernel "$kernel" \
+	--dtb "$tmp/dtb" \
+	--vendor_cmdline "$cmdline" \
+	--vendor_boot "$vboot.tmp" \
+	-o "$boot.tmp"
+
+for f in "$boot.tmp:$BOOT_PARTITION_SIZE" "$vboot.tmp:$VENDOR_BOOT_PARTITION_SIZE"; do
+	file="${f%%:*}" limit="${f##*:}"
+	sz=$(stat -f %z "$file")
+	if [ "$sz" -gt "$limit" ]; then
+		echo "thor-mkbootimg: $file is $sz bytes, partition holds $limit" >&2
+		exit 1
+	fi
+done
+mv "$boot.tmp" "$boot"
+mv "$vboot.tmp" "$vboot"
+echo "thor-mkbootimg: wrote $boot and $vboot (not flashed)"
+echo "thor-mkbootimg: cmdline: $cmdline"

@@ -30,9 +30,10 @@
 - [11. 构建与刷机操作手册](#11-构建与刷机操作手册)
   - [分区大小（256G 版实测）与双槽位安全网](#分区大小256g-版实测与双槽位安全网)
 - [12. 当前状态与已知限制](#12-当前状态与已知限制)
-- [13. 刷入 Ubuntu 后，Mac 还能用 adb 连接吗？](#13-刷入-ubuntu-后mac-还能用-adb-连接吗)
-- [14. 与 Ubuntu Touch 的对比：好处和区别](#14-与-ubuntu-touch-的对比好处和区别)
-- [15. 致谢与参考](#15-致谢与参考)
+- [13. 硬件点亮路线图：刷入后什么能用？](#13-硬件点亮路线图刷入后什么能用)
+- [14. 刷入 Ubuntu 后，Mac 还能用 adb 连接吗？](#14-刷入-ubuntu-后mac-还能用-adb-连接吗)
+- [15. 与 Ubuntu Touch 的对比：好处和区别](#15-与-ubuntu-touch-的对比好处和区别)
+- [16. 致谢与参考](#16-致谢与参考)
 
 ---
 
@@ -375,7 +376,87 @@ USB NCM 网络与串口、UFS 根文件系统、触摸；WiFi/BT/音频/调制�
 - rootfs 内 inode 属主为首启 chown 纠偏（构建宿主无 sudo）
 - LTPO 多档刷新率仅实现 60/120 两档
 
-## 13. 刷入 Ubuntu 后，Mac 还能用 adb 连接吗？
+## 13. 硬件点亮路线图：刷入后什么能用？
+
+对标同 SoC 姊妹机 diting（12T Pro）的实测成果——那是这条路线的"已完成时"：
+电话/短信/5G 注册、语音通话出声、约 330 Mbit/s 移动数据、120Hz 屏幕、GPU（Turnip
+Vulkan）、WiFi、双扬声器、SLPI 传感器、双后摄，全部在 diting 上验证过。thor 的
+问题只是"什么时候把同一条路走完"，而不是"能不能走"。
+
+### 分阶段预期
+
+| 阶段 | 功能 | 依据 |
+| --- | --- | --- |
+| **P0：首次开机即有** | 屏幕（simplefb → 面板 60/120Hz）、USB NCM 网络 + ACM 串口、UFS 根文件系统、触摸（FTM5）、按键、RTC、充电状态（pmic-glink） | 全部内建 + 已验证接线 |
+| **P1：固件提取后（首启自动）** | GPU 加速（Adreno 730 + freedreno/mesa）、调制解调器加载、ADSP/CDSP/SLPI 启动 | `a730_zap`/`modem`/`adsp` 等 mdt+bNN 就在 modem_ FAT 分区，thor-firmware-setup 直接复制 |
+| **P2：数天～数周** | WiFi（ath11k + QCA6490）、蓝牙（hpnv21）、移动数据（IPA v5.1 + rmtfs）、短信、电话注册 | diting 全链路已通；差异只在固件来源与校准变体 |
+| **P3：音频周级** | 扬声器/麦克风/听筒、通话出声、AudioReach 拓扑 | CS35L41+WCD938x 驱动层零风险；缺 thor 专属拓扑（tplg）与 ACDB 查询 |
+| **P4：月级** | 相机（见下节）、视频编解码（iris）、传感器（SLPI/libssc）、USB3/DP-alt 模式、NFC | 单项均为社区已知问题 |
+
+### 📷 IMX989 主摄：现在不能拍，路径已经明确
+
+**现状（刷入首发）**：不能拍照。这不是 CAMSS 层的问题，而是**主线上没有 IMX989
+传感器驱动**——内核相机栈（CAMSS/CCI/CSIPHY）对 SM8450/SM8475 是现成的（diting
+的 C-PHY 主摄 + D-PHY 超广角都已出图），缺的是"怎么跟这颗 1 英寸大底说话"。
+
+整条路 diting 已经趟过一遍：它的主摄 S5KHP1（三星 2 亿像素，C-PHY 三组 trio）
+就是从零写的驱动——`samsung,s5khp1.c` + 寄存器表以 `.camregs` 固件形式加载 +
+C-PHY CAMSS 补丁（含每 trio 速率设置）。thor 要做的是"照抄方法论、换一颗传感器"：
+
+1. **驱动**：仿照 `video-s5khp1` 写 `sony,imx989` 驱动（I2C 探测、供电时序、模式
+   表、曝光/gain 语义）。IMX989 的 D-PHY/C-PHY 选择以厂商 camx 配置为准
+2. **寄存器表**：从 Android 侧提取（见下），生成 `imx989.camregs` 固件，复用
+   diting 的 register-table-as-firmware 机制
+3. **用户态**：libcamera + 软 ISP（diting 补丁：udmabuf、dma-buf 系统堆、libcamera
+   传感器支持），GNOME Snapshot / libcamera-apps 出图；无硬件 ISP，Leica 调色
+   自然也没有——原始画面直出
+4. **期望进度**：裸数据预览（低分辨率 raw 流）≈ 数周；可用拍照（完整模式表 +
+   ISP 调优）≈ 1-2 个月；副摄（48MP 超广 / 48MP 潜望 / 前摄）逐颗追加，
+   每颗都比主摄容易
+
+**关键好消息：数据随时可取**。相机寄存器表与驱动配置藏在 Android 的
+`/vendor/lib64/camx*`、`/odm` 与传感器模块数据里——**slot a 的 Android 保留着**，
+刷完 Ubuntu 后 `fastboot set_active a` 切回去用 adb 随便提取；或者用 diting 的
+只读设备映射（lpmeta + dmsetup + fsck.erofs）直接从 Linux 读 super 里的 vendor。
+不存在"刷机后相机永远没戏"的问题。
+
+### 📞 电话 / 短信 / 移动数据
+
+调制解调器子系统（X70 级基带 + IPA v5.1 + rmtfs + qrtr）是**复用度最高的部分**
+——thor 与 diting 用同一套。diting 的成绩单：5G NR 注册、收发短信、双向语音通话
+（含出声）、~330 Mbit/s 数据，全部走主线栈（ModemManager + MBIM + IPA/qrtr）。
+thor 需要：modem/adsp 固件（首启提取已覆盖）、rmtfs 内存保留（DTS 已有）、
+ModemManager（apt 即有）、diting 的 modem-setup/voice-call 脚本移植（品牌字符串
+级差异）。**中国 5G 频段在 diting 上验证过。**
+
+通话出声依赖 P3 音频拓扑（AudioReach tplg + ACDB）；合理顺序是 P2 先保证
+数据/短信，P3 补通话音频。
+
+### 📶 WiFi / 蓝牙
+
+- **WiFi：QCA6490（WCN6855 家族）+ 主线 ath11k，PCIe 通路与 diting 完全一致**。
+  通用固件（amss/m3/board-2.bin）来自 `linux-firmware` 包；需从设备提取的是校准
+  数据（`bdwlan.bin`，persist 分区或 vendor wlan 目录），配合 DTS 里已写的
+  `qcom,calibration-variant = "Xiaomi_thor"` 加载。这是 P2 里最快点亮的一项
+- **蓝牙**：wcn6855-bt 走 UART20，固件 `hpnv21` + `hpbtfw21.tlv` 在 bluetooth_
+  FAT 分区（sde37）——需给 `thor-firmware-setup` 加一段挂载复制（几行脚本），
+  另外蓝牙地址用 diting 的 `*-bt-address` 方案从 persist 读取后写入 DTS
+
+### 🔊 音频 / 扬声器
+
+驱动层（CS35L41 双功放 + WCD938x 编解码 + SoundWire + ADSP AudioReach）与
+diting 共享、内核侧零风险。缺的是 **thor 专属 AudioReach 拓扑**（tplg 二进制 +
+ACDB 参数查询；diting 有整套工具链：acdb-query + audioreach-topology 宏）。
+前置依赖 ADSP 固件加载成功（P1）。拓扑正确后，扬声器、麦克风、通话出声一起到位。
+
+### 🚫 长期难产项（提前说清）
+
+- **屏下指纹**（超声波）：无主线方案，未知时间
+- **NFC**：NQ 系列 NFC 需厂商 NCI 栈，未排期
+- **Leica 影像调色 / 长焦算法**：不存在于任何主线方案——相机永远是"能拍"而非"原厂画质"
+- **USB3 / DP-alt 模式**：需要 pmic-glink UCSI 角色切换，diting 也还是 USB2 peripheral
+
+## 14. 刷入 Ubuntu 后，Mac 还能用 adb 连接吗？
 
 **能。** adb 的设备端是 `adbd` 守护进程，走 USB 的 ADB 协议；它是普通用户态程序，
 不依赖 Android 内核——Ubuntu Touch（Halium）正是这样做的（Halium 保留 Android
@@ -407,7 +488,7 @@ systemctl enable --now adbd
 便利补充。早期 bring-up（屏幕还没点亮、网络还没起）靠 ramoops 回读，这在 diting
 移植里被验证为最高效的迭代方式。
 
-## 14. 与 Ubuntu Touch 的对比：好处和区别
+## 15. 与 Ubuntu Touch 的对比：好处和区别
 
 先说一个事实：**Ubuntu Touch 根本没有 12S Ultra 的移植**（UBports 设备列表里没有
 thor），所以对本机而言这不是二选一——原生 Ubuntu 是唯一的"真 Linux"路线。但对比
@@ -439,7 +520,7 @@ thor），所以对本机而言这不是二选一——原生 Ubuntu 是唯一�
 "给这台手机一颗真正的 Linux 心脏"。前者换皮快、上限低；后者起手慢、上限是
 一台真正的口袋 Linux 工作站。
 
-## 15. 致谢与参考
+## 16. 致谢与参考
 
 - [royka1/diting-ubuntu](https://github.com/royka1/diting-ubuntu) +
   [royka1/linux-diting](https://github.com/royka1/linux-diting)——本项目的事实标准：

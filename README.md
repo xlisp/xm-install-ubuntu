@@ -541,6 +541,25 @@ thor），所以对本机而言这不是二选一——原生 Ubuntu 是唯一�
 3. **外设逐步点亮**——WiFi/音频/调制解调器按优先级分阶段；好在同 SoC 的 diting
    已把"电话/短信/5G 数据"跑通（IPA v5.1 + rmtfs），移植路径是复刻而非探路
 
+### 磁盘布局：为什么 Ubuntu Touch apt 只有 2G，而我们没有限制
+
+UT 的经典痛点（如在三星 S10 上）：apt 装几个包就满，因为根文件系统只是 Android
+data 分区里一个 **2~4GB 的固定大小 loop 镜像**（rootfs.img），真正的大分区只能
+手动 mount 到 /home。这是 UT 的架构使然——它要用 system-image OTA 推固定尺寸的
+只读镜像，且必须与 Android 数据共存。
+
+本项目没有这个概念层：
+
+| | Ubuntu Touch | 本项目 |
+| --- | --- | --- |
+| 根文件系统 | data 分区内的 rootfs.img 循环镜像（2~4GB） | **直接格式化整个 userdata 物理分区**（sda36，224 GiB）为 ext4 |
+| Android 分区布局 | 保留（寄生共存） | 已被覆盖，不复存在 |
+| apt 可用空间 | 镜像内剩余空间（很快满） | 首启 `resize2fs` 自动扩满 **~224G**，apt/docker/一切共享 |
+| /home 怪癖 | 需手动挂载 data 分区 | 无，单一目录树 |
+| 扩容方式 | 手动扩 loop 镜像 + resize（麻烦） | 自动（first-boot 服务），12G 只是种子大小 |
+
+`df -h /` 在首启后直接看到 ~220G 可用，没有任何"镜像装满"式的风险。
+
 **一句话总结**：Ubuntu Touch 是"在 Android 内核上借一个 Linux 桌面"，本项目是
 "给这台手机一颗真正的 Linux 心脏"。前者换皮快、上限低；后者起手慢、上限是
 一台真正的口袋 Linux 工作站。
